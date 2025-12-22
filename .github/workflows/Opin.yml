@@ -1,0 +1,50 @@
+name: prkgg VM - Dark + Wallpaper
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Enable RDP
+      shell: powershell
+      run: |
+        net user runneradmin "123456" /add
+        net localgroup administrators runneradmin /add
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+    - name: Dark Mode + Wallpaper (CORRIGIDO)
+      shell: powershell
+      run: |
+        $user = "runneradmin"
+        $sid = (Get-LocalUser $user | Select-Object -ExpandProperty SID).Value
+
+        Write-Host "SID do usuário: $sid"
+
+        # ===== DARK MODE =====
+        reg add "HKU\$sid\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 0 /f
+        reg add "HKU\$sid\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f
+
+        # ===== WALLPAPER =====
+        $wallpaperPath = "C:\wallpaper.jpg"
+        Invoke-WebRequest "https://i.imgur.com/CK0Mh6y.jpeg" -OutFile $wallpaperPath
+
+        reg add "HKU\$sid\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d $wallpaperPath /f
+        reg add "HKU\$sid\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d 10 /f
+        reg add "HKU\$sid\Control Panel\Desktop" /v TileWallpaper /t REG_SZ /d 0 /f
+
+        # ===== REFRESH =====
+        rundll32.exe user32.dll, UpdatePerUserSystemParameters
+
+    - name: Keep VM Alive (6 horas)
+      shell: powershell
+      run: |
+        Write-Host "VM rodando por 6 horas..."
+        Start-Sleep -Seconds 21600
