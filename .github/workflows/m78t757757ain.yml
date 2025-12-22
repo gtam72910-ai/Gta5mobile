@@ -1,0 +1,50 @@
+name: Windows RDP Ready
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Enable RDP and user
+      shell: powershell
+      run: |
+        $username = "${{ secrets.RDP_USER }}"
+        $password = "${{ secrets.RDP_PASS }}"
+
+        $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+          New-LocalUser -Name $username -Password $securePass -PasswordNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+        } else {
+          Write-Host "Usuário já existe"
+        }
+
+        Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+    - name: Dark Mode
+      shell: powershell
+      run: |
+        New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name AppsUseLightTheme -Value 0
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name SystemUsesLightTheme -Value 0
+
+    - name: Download Wallpaper
+      shell: powershell
+      run: |
+        Invoke-WebRequest "https://i.imgur.com/CK0Mh6y.jpeg" -OutFile "C:\wallpaper.jpg"
+
+    - name: Keep VM Alive
+      shell: powershell
+      run: |
+        Write-Host "VM ativa por 6 horas"
+        Start-Sleep -Seconds 21600
