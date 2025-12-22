@@ -1,4 +1,4 @@
-name: Windows-RDP-Tailscale
+name: : PR-K-CLOUD
 
 on:
   workflow_dispatch:
@@ -9,16 +9,15 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Enable RDP and Firewall
+
+      - name: Enable RDP and firewall rule
         run: |
+          # Ativa o RDP no Windows
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
             -Name "fDenyTSConnections" -Value 0
 
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
-            -Name "UserAuthentication" -Value 0
-
-          netsh advfirewall firewall add rule name="AllowRDP" `
-            dir=in action=allow protocol=TCP localport=3389
+          # Permite RDP no firewall
+          netsh advfirewall firewall add rule name="AllowRDP" dir=in action=allow protocol=TCP localport=3389
 
           Restart-Service TermService -Force
 
@@ -26,11 +25,9 @@ jobs:
         run: |
           $username = "${{ secrets.RDP_USERNAME }}"
           $password = "${{ secrets.RDP_PASSWORD }}"
-
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
           if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-            Write-Host "User exists, resetting password..."
             Set-LocalUser -Name $username -Password $securePass
           } else {
             New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
@@ -38,7 +35,6 @@ jobs:
 
           Add-LocalGroupMember -Group "Administrators" -Member $username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-
           echo "RDP_USER=$username" >> $env:GITHUB_ENV
 
       - name: Install Tailscale
@@ -46,13 +42,11 @@ jobs:
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $path = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest $url -OutFile $path
-          Start-Process msiexec.exe -ArgumentList "/i `"$path`" /quiet /norestart" -Wait
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$path`"", "/quiet", "/norestart" -Wait
 
       - name: Connect to Tailscale
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=github-rdp-$env:GITHUB_RUN_ID
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-$env:GITHUB_RUN_ID
 
           $ip = $null
           for ($i=0; $i -lt 10; $i++) {
@@ -68,13 +62,35 @@ jobs:
 
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
+      # ───────────────────────────────────────────────────────
+      # AQUI COMEÇA A PARTE DE MODO ESCURO + WALLPAPER
+      - name: Set Dark Mode + Custom Wallpaper
+        shell: powershell
+        run: |
+          # Ativa modo escuro (Apps e Sistema)
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
+            /v AppsUseLightTheme /t REG_DWORD /d 0 /f
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
+            /v SystemUsesLightTheme /t REG_DWORD /d 0 /f
+
+          # Baixa o wallpaper da sua imagem no Imgur
+          $wallpaperUrl = "https://i.imgur.com/CK0Mh6y.jpeg"
+          $wallpaperPath = "$env:USERPROFILE\wallpaper.jpeg"
+          Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath
+
+          # Define o wallpaper via registro
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "Wallpaper" -Value $wallpaperPath
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallpaperStyle" -Value "10"
+
+          # Atualiza wallpaper imediatamente
+          rundll32.exe user32.dll,UpdatePerUserSystemParameters
+
       - name: Show connection info
         run: |
           Write-Host "=============================="
-          Write-Host "RDP READY"
-          Write-Host "Address : $env:TAILSCALE_IP"
-          Write-Host "User    : $env:RDP_USER"
-          Write-Host "Password: (defined in Secrets)"
+          Write-Host "RDP Address: $env:TAILSCALE_IP"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Password: (in Secrets)"
           Write-Host "=============================="
 
       - name: Keep machine alive
