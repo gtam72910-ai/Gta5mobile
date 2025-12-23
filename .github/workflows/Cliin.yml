@@ -1,0 +1,110 @@
+name: ,Windows-Cloud-Gaming-Sunshine
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cloud:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty `
+            -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+            -Name "fDenyTSConnections" -Value 0
+
+          netsh advfirewall firewall add rule name="AllowRDP" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          Restart-Service TermService -Force
+
+      - name: Create fixed user
+        run: |
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+
+      - name: Install Sunshine
+        run: |
+          $url = "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe"
+          $path = "$env:TEMP\sunshine.exe"
+
+          Invoke-WebRequest $url -OutFile $path
+          Start-Process $path -ArgumentList "/S" -Wait
+
+      - name: Configure Sunshine (Moonlight optimized)
+        run: |
+          $config = "$env:ProgramFiles\Sunshine\config\sunshine.conf"
+
+          New-Item -ItemType Directory -Force `
+            -Path "$env:ProgramFiles\Sunshine\config"
+
+          @"
+          sunshine_name = PR Cloud
+          origin_web_ui_allowed = lan
+          web_ui_password = ${{ secrets.SUNSHINE_PASSWORD }}
+
+          encoder = nvenc
+          codec = h264
+          fps = 60
+          bitrate = 30000
+          vsync = false
+          gamepad = xinput
+          "@ | Out-File $config -Encoding ASCII
+
+      - name: Open Sunshine Firewall
+        run: |
+          netsh advfirewall firewall add rule name="Sunshine TCP" `
+            dir=in action=allow protocol=TCP localport=47984-47990
+
+          netsh advfirewall firewall add rule name="Sunshine UDP" `
+            dir=in action=allow protocol=UDP localport=47984-47990
+
+      - name: Start Sunshine
+        run: |
+          Start-Process `
+            "$env:ProgramFiles\Sunshine\sunshine.exe" `
+            -WindowStyle Hidden
+
+      - name: Install Tailscale
+        run: |
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $path = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest $url -OutFile $path
+          Start-Process msiexec.exe -ArgumentList "/i `"$path`" /quiet" -Wait
+
+      - name: Connect Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=PR-Cloud
+
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Info
+        run: |
+          Write-Host "=============================="
+          Write-Host "🎮 CLOUD GAMING READY"
+          Write-Host "Moonlight IP: $env:IP"
+          Write-Host "Sunshine UI: https://$env:IP:47990"
+          Write-Host "=============================="
+
+      - name: Keep Alive
+        run: |
+          while ($true) {
+            Start-Sleep 300
+          }
