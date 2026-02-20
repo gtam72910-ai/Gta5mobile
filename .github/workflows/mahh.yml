@@ -1,0 +1,149 @@
+name: .a.o~Cloud.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP e Firewall
+        shell: powershell
+        run: |
+          Write-Host "Ativando Área de Trabalho Remota..."
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+          netsh advfirewall firewall add rule name="Permitir RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+          Write-Host "RDP ativado com sucesso!"
+
+      - name: 👤 Criar usuário RDP
+        shell: powershell
+        run: |
+          Write-Host "Criando usuário..."
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+          echo "RDP_USER=$u" >> $env:GITHUB_ENV
+          Write-Host "Usuário configurado com sucesso!"
+
+      - name: 🎨 Interface estilo Windows 10
+        shell: powershell
+        run: |
+          Write-Host "Aplicando tema estilo Windows 10..."
+
+          New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" AppsUseLightTheme 1
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" SystemUsesLightTheme 1
+
+          $wall = "$env:USERPROFILE\win10.jpg"
+          Invoke-WebRequest "https://i.imgur.com/Yk8JfXG.jpg" -OutFile $wall
+
+          reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "$wall" /f
+          reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f
+          RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters
+
+      - name: 🪟 Menu iniciar estilo Windows 10 (robusto)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Write-Host "Instalando Open-Shell (modo robusto)..."
+
+          $urls = @(
+            "https://github.com/Open-Shell/Open-Shell-Menu/releases/latest/download/OpenShellSetup.exe"
+          )
+
+          $out = "$env:TEMP\OpenShellSetup.exe"
+          $ok = $false
+
+          foreach ($url in $urls) {
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Write-Host "Tentativa $i de download..."
+                Invoke-WebRequest $url -OutFile $out -UseBasicParsing -TimeoutSec 60
+                if (Test-Path $out) {
+                  $ok = $true
+                  break
+                }
+              } catch {
+                Start-Sleep 3
+              }
+            }
+            if ($ok) { break }
+          }
+
+          if ($ok) {
+            Start-Process $out -ArgumentList "/quiet" -Wait
+            Write-Host "Open-Shell instalado com sucesso!"
+          } else {
+            Write-Host "Falha ao baixar Open-Shell. Continuando sem ele."
+          }
+
+      - name: 🌐 Instalar Tailscale
+        shell: powershell
+        run: |
+          Write-Host "Instalando Tailscale..."
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
+          Write-Host "Tailscale instalado!"
+
+      - name: 🔗 Conectar ao Tailscale
+        shell: powershell
+        run: |
+          Write-Host "Conectando ao Tailscale..."
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=PR-Cloud
+
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+          Write-Host "Tailscale conectado!"
+
+      - name: 🎮📦 GAMING — Instalar Steam
+        shell: powershell
+        run: |
+          Write-Host "Baixando Steam..."
+          $steam = "$env:TEMP\SteamSetup.exe"
+          Invoke-WebRequest "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe" -OutFile $steam
+          Start-Process $steam -ArgumentList "/S" -Wait
+          Write-Host "Steam instalada com sucesso!"
+
+      - name: 🚀 Abrir Steam automaticamente
+        shell: powershell
+        run: |
+          Write-Host "Configurando inicialização automática da Steam..."
+          New-ItemProperty `
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+            -Name "Steam" `
+            -Value '"C:\Program Files (x86)\Steam\Steam.exe" -silent' `
+            -Force
+
+          Start-Process "C:\Program Files (x86)\Steam\Steam.exe"
+          Write-Host "Steam iniciada!"
+
+      - name: 📡 Informações finais
+        shell: powershell
+        run: |
+          Write-Host "===================================="
+          Write-Host "💻 SISTEMA : Windows Server (Visual Windows 10)"
+          Write-Host "🌐 IP      : $env:TAILSCALE_IP"
+          Write-Host "👤 USUÁRIO : $env:RDP_USER"
+          Write-Host "🎮 STEAM   : PRONTA"
+          Write-Host "===================================="
+
+      - name: ⏳ Manter máquina ligada
+        shell: powershell
+        run: |
+          Write-Host "Máquina ativa. Pode conectar via RDP."
+          while ($true) { Start-Sleep 300 }
