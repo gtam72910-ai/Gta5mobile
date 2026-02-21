@@ -1,0 +1,81 @@
+name: .yuzu.~Cloud
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+
+      - name: 👤 Criar usuário
+        shell: powershell
+        run: |
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+
+      - name: ⚡ Otimização Gamer
+        shell: powershell
+        run: |
+          powercfg -setactive SCHEME_MIN
+          reg add "HKCU\Software\Microsoft\GameBar" /v AllowAutoGameMode /t REG_DWORD /d 0 /f
+          reg add "HKCU\System\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f
+
+      - name: 🎮 Instalar Steam
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe -OutFile steam.exe
+          Start-Process steam.exe -ArgumentList "/S" -Wait
+
+      - name: 📦 Instalar WinRAR
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-621.exe -OutFile winrar.exe
+          Start-Process winrar.exe -ArgumentList "/S" -Wait
+
+      - name: 🌞 Instalar Sunshine (link fixo)
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://github.com/LizardByte/Sunshine/releases/download/v2026.221.41532/Sunshine-Windows-AMD64-installer.exe -OutFile sunshine.exe
+          Start-Process sunshine.exe -ArgumentList "/S" -Wait
+
+      - name: 🧩 Instalar Yuzu (MediaFire)
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://www.mediafire.com/file/nkj947dcs73j9km/yuzu-windows-msvc-20240304-537296095.zip/file" `
+            -OutFile yuzu.zip
+
+          Expand-Archive yuzu.zip "$env:LOCALAPPDATA" -Force
+
+          $cfgDir = "$env:LOCALAPPDATA\yuzu\config"
+          New-Item $cfgDir -ItemType Directory -Force | Out-Null
+
+          $cfg = "[Core]`nuse_multi_core=true`ncpu_accuracy=0`n`n[Renderer]`nbackend=opengl`nuse_disk_shader_cache=true`nuse_asynchronous_gpu_emulation=true`nresolution_setup=1`nvsync=false"
+
+          Set-Content "$cfgDir\qt-config.ini" $cfg
+
+          New-Item "$env:LOCALAPPDATA\yuzu\keys" -ItemType Directory -Force | Out-Null
+          New-Item "$env:LOCALAPPDATA\yuzu\nand" -ItemType Directory -Force | Out-Null
+
+      - name: ⏳ Manter VM ligada
+        shell: powershell
+        run: |
+          while ($true) { Start-Sleep 300 }
