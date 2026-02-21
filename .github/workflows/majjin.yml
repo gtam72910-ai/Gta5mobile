@@ -1,0 +1,147 @@
+name: .a.Cloud.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP e Firewall
+        shell: powershell
+        run: |
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+
+      - name: 👤 Criar usuário RDP
+        shell: powershell
+        run: |
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+          echo "RDP_USER=$u" >> $env:GITHUB_ENV
+
+      - name: ⚡ OTIMIZAÇÃO EXTREMA PARA JOGOS
+        shell: powershell
+        run: |
+          powercfg -setactive SCHEME_MIN
+
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f
+          reg add "HKCU\Software\Microsoft\GameBar" /v AllowAutoGameMode /t REG_DWORD /d 0 /f
+          reg add "HKCU\System\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f
+          reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR" /v AllowGameDVR /t REG_DWORD /d 0 /f
+
+          Stop-Service XboxGipSvc -Force
+          Stop-Service XblAuthManager -Force
+          Stop-Service XblGameSave -Force
+          Set-Service XboxGipSvc -StartupType Disabled
+          Set-Service XblAuthManager -StartupType Disabled
+          Set-Service XblGameSave -StartupType Disabled
+
+      - name: 🌐 Instalar Tailscale
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
+
+      - name: 🔗 Conectar ao Tailscale
+        shell: powershell
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=PR-Cloud
+
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: 🎮 Instalar Steam
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe" -OutFile "$env:TEMP\Steam.exe"
+          Start-Process "$env:TEMP\Steam.exe" -ArgumentList "/S" -Wait
+
+      - name: 📦 Instalar WinRAR
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-621.exe" -OutFile "$env:TEMP\winrar.exe"
+          Start-Process "$env:TEMP\winrar.exe" -ArgumentList "/S" -Wait
+
+      - name: 🌞 Instalar Sunshine
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe" -OutFile "$env:TEMP\sunshine.exe"
+          Start-Process "$env:TEMP\sunshine.exe" -ArgumentList "/S" -Wait
+          Start-Service sunshine
+
+      - name: 🧩 GAMER — Instalar Yuzu (Switch Emulator)
+        shell: powershell
+        run: |
+          Write-Host "Instalando Yuzu..."
+
+          $yuzuZip = "$env:TEMP\yuzu.zip"
+          $yuzuDir = "$env:LOCALAPPDATA\yuzu"
+
+          Invoke-WebRequest `
+            "https://github.com/yuzu-emu/yuzu-mainline/releases/latest/download/yuzu-windows-msvc.zip" `
+            -OutFile $yuzuZip
+
+          Expand-Archive $yuzuZip -DestinationPath "$env:LOCALAPPDATA" -Force
+
+          New-Item "$yuzuDir\keys" -ItemType Directory -Force | Out-Null
+          New-Item "$yuzuDir\nand" -ItemType Directory -Force | Out-Null
+
+          $config = "$yuzuDir\config\qt-config.ini"
+          New-Item (Split-Path $config) -ItemType Directory -Force | Out-Null
+
+          @"
+[Core]
+use_multi_core=true
+cpu_accuracy=0
+
+[Renderer]
+backend=opengl
+use_disk_shader_cache=true
+use_asynchronous_gpu_emulation=true
+resolution_setup=1
+vsync=false
+
+[System]
+language=portuguese
+"@ | Out-File $config -Encoding UTF8 -Force
+
+          Write-Host "Yuzu instalado e otimizado!"
+
+      - name: 🚀 Auto iniciar Steam
+        shell: powershell
+        run: |
+          New-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+            -Name "Steam" `
+            -Value '"C:\Program Files (x86)\Steam\Steam.exe" -silent' `
+            -Force
+
+      - name: 📡 Info Final
+        shell: powershell
+        run: |
+          Write-Host "==============================="
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "USUÁRIO: $env:RDP_USER"
+          Write-Host "Steam, WinRAR, Sunshine e Yuzu PRONTOS"
+          Write-Host "==============================="
+
+      - name: ⏳ Manter VM ligada
+        shell: powershell
+        run: |
+          while ($true) { Start-Sleep 300 }
