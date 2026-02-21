@@ -1,0 +1,130 @@
+name: .windows7~Cloud
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP e Firewall
+        shell: powershell
+        run: |
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+          netsh advfirewall firewall add rule name="Permitir RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+
+      - name: 👤 Criar usuário RDP
+        shell: powershell
+        run: |
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+          echo "RDP_USER=$u" >> $env:GITHUB_ENV
+
+      - name: 🎨 Visual estilo Windows 7 (tema + Aero)
+        shell: powershell
+        run: |
+          New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" AppsUseLightTheme 1
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" SystemUsesLightTheme 1
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" EnableTransparency 1
+
+          # Wallpaper Windows 7
+          $wall = "$env:USERPROFILE\win7.jpg"
+          Invoke-WebRequest "https://i.imgur.com/6Iej2c3.jpg" -OutFile $wall
+          reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "$wall" /f
+          reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f
+          RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters
+
+      - name: ⚡ Ajustes de desempenho (menos visual moderno)
+        shell: powershell
+        run: |
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f
+          reg add "HKCU\Control Panel\Desktop" /v UserPreferencesMask /t REG_BINARY /d 9012078010000000 /f
+
+      - name: 🪟 Instalar Open-Shell (Menu Windows 7)
+        shell: powershell
+        run: |
+          $out = "$env:TEMP\OpenShellSetup.exe"
+          Invoke-WebRequest "https://github.com/Open-Shell/Open-Shell-Menu/releases/latest/download/OpenShellSetup.exe" -OutFile $out
+          Start-Process $out -ArgumentList "/quiet" -Wait
+
+      - name: 🪟 Configurar Open-Shell estilo Windows 7
+        shell: powershell
+        run: |
+          $reg = "HKCU:\Software\OpenShell\StartMenu"
+          New-Item $reg -Force | Out-Null
+          Set-ItemProperty $reg MenuStyle 1
+          Set-ItemProperty $reg Skin "Windows Aero"
+          Set-ItemProperty $reg EnableGlass 1
+          Set-ItemProperty $reg StartButtonType 2
+
+      - name: 🔊 Sons do Windows 7
+        shell: powershell
+        run: |
+          $soundDir = "$env:WINDIR\Media"
+          Invoke-WebRequest "https://archive.org/download/windows-7-sounds/Windows%207%20Sounds.zip" -OutFile "$env:TEMP\w7sounds.zip"
+          Expand-Archive "$env:TEMP\w7sounds.zip" "$env:TEMP\w7sounds" -Force
+          Copy-Item "$env:TEMP\w7sounds\*" $soundDir -Recurse -Force
+
+      - name: 🌐 Instalar Tailscale
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
+
+      - name: 🔗 Conectar ao Tailscale
+        shell: powershell
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=PR-Cloud
+
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: 🎮 Instalar Steam
+        shell: powershell
+        run: |
+          $steam = "$env:TEMP\SteamSetup.exe"
+          Invoke-WebRequest "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe" -OutFile $steam
+          Start-Process $steam -ArgumentList "/S" -Wait
+
+      - name: 🚀 Abrir Steam automaticamente
+        shell: powershell
+        run: |
+          New-ItemProperty `
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+            -Name "Steam" `
+            -Value '"C:\Program Files (x86)\Steam\Steam.exe" -silent' `
+            -Force
+
+          Start-Process "C:\Program Files (x86)\Steam\Steam.exe"
+
+      - name: 📡 Informações finais
+        shell: powershell
+        run: |
+          Write-Host "=============================="
+          Write-Host "🪟 VISUAL : Windows 7 (simulado)"
+          Write-Host "🌐 IP     : $env:TAILSCALE_IP"
+          Write-Host "👤 USER   : $env:RDP_USER"
+          Write-Host "🎮 STEAM  : OK"
+          Write-Host "=============================="
+
+      - name: ⏳ Manter máquina ligada
+        shell: powershell
+        run: |
+          while ($true) { Start-Sleep 300 }
