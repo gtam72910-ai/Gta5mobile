@@ -1,0 +1,172 @@
+name: .aud.bh7n7un
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP e Firewall
+        shell: powershell
+        run: |
+          Write-Host "Ativando Área de Trabalho Remota..."
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+          netsh advfirewall firewall add rule name="Permitir RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+          Write-Host "RDP ativado com sucesso!"
+
+      - name: 👤 Criar usuário RDP
+        shell: powershell
+        run: |
+          Write-Host "Criando usuário..."
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+          echo "RDP_USER=$u" >> $env:GITHUB_ENV
+          Write-Host "Usuário configurado com sucesso!"
+
+      - name: ⚡ Otimização de desempenho (Games / Cloud)
+        shell: powershell
+        run: |
+          Write-Host "Aplicando otimizações..."
+
+          powercfg -setactive SCHEME_MIN
+
+          New-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force | Out-Null
+          Set-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" `
+            SystemResponsiveness 0
+
+          New-Item `
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" `
+            -Force | Out-Null
+
+          Set-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" `
+            "GPU Priority" 8
+          Set-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" `
+            "Priority" 6
+          Set-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" `
+            "Scheduling Category" "High"
+
+          $services = @("SysMain","DiagTrack","MapsBroker","WSearch","Fax")
+          foreach ($s in $services) {
+            Get-Service $s -ErrorAction SilentlyContinue | Stop-Service -Force -ErrorAction SilentlyContinue
+            Set-Service $s -StartupType Disabled -ErrorAction SilentlyContinue
+          }
+
+          Write-Host "Otimização aplicada!"
+
+      - name: 🎮 Instalar ViGEmBus (Driver de controle virtual)
+        shell: powershell
+        run: |
+          Write-Host "Ativando Test Mode (necessário no Windows Server)..."
+          bcdedit /set testsigning on
+
+          Write-Host "Baixando ViGEmBus..."
+          Invoke-WebRequest `
+            "https://github.com/ViGEm/ViGEmBus/releases/latest/download/ViGEmBus_Setup_x64.msi" `
+            -OutFile "$env:TEMP\ViGEmBus.msi"
+
+          Write-Host "Instalando ViGEmBus..."
+          Start-Process msiexec.exe `
+            -ArgumentList "/i `"$env:TEMP\ViGEmBus.msi`" /quiet /norestart" `
+            -Wait
+
+          Write-Host "ViGEmBus instalado (driver será carregado após login RDP)."
+
+      - name: 🎨 Interface estilo Windows 10
+        shell: powershell
+        run: |
+          New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" AppsUseLightTheme 1
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" SystemUsesLightTheme 1
+
+          $wall = "$env:USERPROFILE\win10.jpg"
+          Invoke-WebRequest "https://i.imgur.com/Yk8JfXG.jpg" -OutFile $wall
+          reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "$wall" /f
+          reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f
+          RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters
+
+      - name: 🌐 Instalar Tailscale
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
+
+      - name: 🔗 Conectar ao Tailscale
+        shell: powershell
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=PR-Cloud
+
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: 🎮 Instalar Steam
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe" -OutFile "$env:TEMP\steam.exe"
+          Start-Process "$env:TEMP\steam.exe" -ArgumentList "/S" -Wait
+
+      - name: 📦 Instalar WinRAR
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-624.exe" -OutFile "$env:TEMP\winrar.exe"
+          Start-Process "$env:TEMP\winrar.exe" -ArgumentList "/S" -Wait
+
+      - name: ☀️ Instalar Sunshine
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://github.com/LizardByte/Sunshine/releases/download/v2026.221.41532/Sunshine-Windows-AMD64-installer.exe" -OutFile "$env:TEMP\sunshine.exe"
+          Start-Process "$env:TEMP\sunshine.exe" -ArgumentList "/S" -Wait
+
+      - name: 🎮 Instalar Yuzu
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://download2391.mediafire.com/10j0si5ya17g3dp8IRfpFf261SI8svm6MyhXaDWwRUShMcCF9_FWgWQT3bsaQ5qZdr_Pb1asGGIcrC0f7zSYC7LmX-pI03UwsgaxnXbZL0xxQ-Ki-CwRUW4TuiKzNtVIAOmbrRyKYbN4ib9akwfe7oNLLAhss0HDVMksinnFD27yGSNl/nkj947dcs73j9km/yuzu-windows-msvc-20240304-537296095.zip" -OutFile "$env:TEMP\yuzu.zip"
+          New-Item "C:\Yuzu" -ItemType Directory -Force
+          Expand-Archive "$env:TEMP\yuzu.zip" "C:\Yuzu" -Force
+
+      - name: 🖥️ Criar atalhos no Desktop
+        shell: powershell
+        run: |
+          $d = "C:\Users\Public\Desktop"
+          $w = New-Object -ComObject WScript.Shell
+
+          $s = $w.CreateShortcut("$d\Steam.lnk")
+          $s.TargetPath = "C:\Program Files (x86)\Steam\Steam.exe"
+          $s.Save()
+
+          $y = $w.CreateShortcut("$d\Yuzu.lnk")
+          $y.TargetPath = "C:\Yuzu\yuzu.exe"
+          $y.Save()
+
+          $su = $w.CreateShortcut("$d\Sunshine.lnk")
+          $su.TargetPath = "C:\Program Files\Sunshine\sunshine.exe"
+          $su.Save()
+
+          $t = $w.CreateShortcut("$d\Tailscale.lnk")
+          $t.TargetPath = "C:\Program Files\Tailscale\tailscale-ui.exe"
+          $t.Save()
+
+      - name: ⏳ Manter VM ligada
+        shell: powershell
+        run: |
+          while ($true) { Start-Sleep 300 }
