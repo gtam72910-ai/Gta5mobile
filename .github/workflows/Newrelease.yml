@@ -1,0 +1,125 @@
+name: .a add.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP e Firewall
+        shell: powershell
+        run: |
+          Write-Host "Ativando Área de Trabalho Remota..."
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+          netsh advfirewall firewall add rule name="Permitir RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+
+      - name: 👤 Criar usuário RDP
+        shell: powershell
+        run: |
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+
+      - name: ⚡ Otimização de desempenho (Games / Cloud)
+        shell: powershell
+        run: |
+          powercfg -setactive SCHEME_MIN
+
+          New-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force | Out-Null
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" SystemResponsiveness 0
+
+          New-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" -Force | Out-Null
+
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" "GPU Priority" 8
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" "Priority" 6
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games" "Scheduling Category" "High"
+
+      - name: 🎮 Instalar ViGEmBus (Driver de controle virtual)
+        shell: powershell
+        run: |
+          bcdedit /set testsigning on
+
+          $dest = "$env:TEMP\ViGEmBus.msi"
+          curl.exe -L https://github.com/ViGEm/ViGEmBus/releases/latest/download/ViGEmBus_Setup_x64.msi -o "$dest"
+
+          if (!(Test-Path $dest)) { exit 1 }
+
+          Start-Process msiexec.exe -ArgumentList "/i `"$dest`" /quiet /norestart" -Wait
+
+      - name: 🎨 Interface estilo Windows 10
+        shell: powershell
+        run: |
+          New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Force | Out-Null
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" AppsUseLightTheme 1
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" SystemUsesLightTheme 1
+
+          $wall = "$env:USERPROFILE\win10.jpg"
+          curl.exe -L https://i.imgur.com/Yk8JfXG.jpg -o $wall
+          reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d "$wall" /f
+          reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d "10" /f
+          RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters
+
+      - name: 🌐 Instalar Tailscale
+        shell: powershell
+        run: |
+          curl.exe -L https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -o "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
+
+      - name: 🔗 Conectar ao Tailscale
+        shell: powershell
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=PR-Cloud
+
+      - name: 🎮 Instalar Steam
+        shell: powershell
+        run: |
+          curl.exe -L https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe -o "$env:TEMP\steam.exe"
+          Start-Process "$env:TEMP\steam.exe" -ArgumentList "/S" -Wait
+
+      - name: 📦 Instalar WinRAR
+        shell: powershell
+        run: |
+          curl.exe -L https://www.win-rar.com/fileadmin/winrar-versions/winrar/winrar-x64-624.exe -o "$env:TEMP\winrar.exe"
+          Start-Process "$env:TEMP\winrar.exe" -ArgumentList "/S" -Wait
+
+      - name: ☀️ Instalar Sunshine
+        shell: powershell
+        run: |
+          curl.exe -L https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-AMD64-installer.exe -o "$env:TEMP\sunshine.exe"
+          Start-Process "$env:TEMP\sunshine.exe" -ArgumentList "/S" -Wait
+
+      - name: ☀️ Mostrar IP do Sunshine
+        shell: powershell
+        run: |
+          Write-Host "=============================="
+          Write-Host "SUNSHINE INSTALADO"
+          Write-Host "Painel Web:"
+          Write-Host "http://localhost:47990"
+          Write-Host ""
+          Write-Host "Pegando IP do Tailscale..."
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          Write-Host ""
+          Write-Host "ACESSE NO CELULAR:"
+          Write-Host "http://$ip`:47990"
+          Write-Host "=============================="
+
+      - name: ⏳ Manter VM ligada
+        shell: powershell
+        run: |
+          while ($true) { Start-Sleep 300 }
