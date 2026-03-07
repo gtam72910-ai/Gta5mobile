@@ -1,0 +1,121 @@
+name: .alou28838338383883d.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: 🔐 Ativar RDP e Firewall
+        shell: powershell
+        run: |
+          Write-Host "Ativando Área de Trabalho Remota..."
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+          netsh advfirewall firewall add rule name="Permitir RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
+
+      - name: 👤 Criar usuário RDP
+        shell: powershell
+        run: |
+          $u = "${{ secrets.RDP_USERNAME }}"
+          $p = "${{ secrets.RDP_PASSWORD }}"
+          $sp = ConvertTo-SecureString $p -AsPlainText -Force
+
+          if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $u -Password $sp
+          } else {
+            New-LocalUser -Name $u -Password $sp -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember Administrators $u
+          Add-LocalGroupMember "Remote Desktop Users" $u
+
+      - name: ⚡ Otimização de desempenho
+        shell: powershell
+        run: |
+          powercfg -setactive SCHEME_MIN
+
+      - name: 🎮 Instalar ViGEmBus
+        shell: powershell
+        run: |
+          bcdedit /set testsigning on
+          curl.exe -L https://github.com/ViGEm/ViGEmBus/releases/latest/download/ViGEmBus_Setup_x64.msi -o "$env:TEMP\vigem.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\vigem.msi`" /quiet /norestart" -Wait
+
+      - name: 🌐 Instalar Tailscale
+        shell: powershell
+        run: |
+          curl.exe -L https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -o "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\tailscale.msi`" /quiet /norestart" -Wait
+
+      - name: 🔗 Conectar Tailscale
+        shell: powershell
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=PR-Cloud
+
+      - name: 🎮 Instalar Steam
+        shell: powershell
+        run: |
+          curl.exe -L https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe -o "$env:TEMP\steam.exe"
+          Start-Process "$env:TEMP\steam.exe" -ArgumentList "/S" -Wait
+
+      - name: ☀️ Instalar Sunshine
+        shell: powershell
+        run: |
+          curl.exe -L https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-AMD64-installer.exe -o "$env:TEMP\sunshine.exe"
+          Start-Process "$env:TEMP\sunshine.exe" -ArgumentList "/S" -Wait
+
+      - name: ☀️ Iniciar Sunshine
+        shell: powershell
+        run: |
+          Start-Service SunshineService
+          Start-Sleep 10
+
+      - name: 🔓 Abrir portas Sunshine
+        shell: powershell
+        run: |
+          netsh advfirewall firewall add rule name="Sunshine1" dir=in action=allow protocol=TCP localport=47984
+          netsh advfirewall firewall add rule name="Sunshine2" dir=in action=allow protocol=TCP localport=47989
+          netsh advfirewall firewall add rule name="Sunshine3" dir=in action=allow protocol=TCP localport=47990
+          netsh advfirewall firewall add rule name="Sunshine4" dir=in action=allow protocol=TCP localport=48010
+
+      - name: 🌐 Servidor para enviar PIN
+        shell: powershell
+        run: |
+          $listener = New-Object System.Net.HttpListener
+          $listener.Prefixes.Add("http://*:8080/")
+          $listener.Start()
+          Write-Host "Servidor PIN ativo na porta 8080"
+
+          while ($listener.IsListening) {
+              $context = $listener.GetContext()
+              $request = $context.Request
+              $response = $context.Response
+
+              if ($request.HttpMethod -eq "POST") {
+                  $reader = New-Object System.IO.StreamReader($request.InputStream)
+                  $pin = $reader.ReadToEnd()
+
+                  & "C:\Program Files\Sunshine\sunshine.exe" --pair $pin
+
+                  $msg = "PIN enviado para Sunshine"
+              }
+              else {
+                  $msg = "<html><body>
+                  <h2>Moonlight PIN</h2>
+                  <form method='post'>
+                  <input name='pin'/>
+                  <button type='submit'>Enviar</button>
+                  </form>
+                  </body></html>"
+              }
+
+              $buffer = [System.Text.Encoding]::UTF8.GetBytes($msg)
+              $response.ContentLength64 = $buffer.Length
+              $response.OutputStream.Write($buffer,0,$buffer.Length)
+              $response.OutputStream.Close()
+          }
